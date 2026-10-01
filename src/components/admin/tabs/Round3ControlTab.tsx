@@ -14,6 +14,7 @@ export const Round3ControlTab: React.FC = () => {
     recordRound3Attempt,
     closeRound3Question,
     setCurrentRound,
+    autoQualifyTop10R2,
   } = useEvent();
   const { round3, questionBanks, teams, activeQuestion } = state;
   const index = round3.currentQuestionIndex;
@@ -40,6 +41,23 @@ export const Round3ControlTab: React.FC = () => {
 
   return (
     <div className="space-y-5">
+      {finalists.length === 0 && (
+        <div className="bg-amber-950/80 border-2 border-amber-400 p-4 shadow-pixel flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-amber-300">
+            <ShieldAlert className="w-5 h-5 flex-shrink-0 text-amber-400" />
+            <span className="font-sans text-xs">
+              No finalists qualified for Round 3 yet. Advance the Top 10 teams from Round 2 now:
+            </span>
+          </div>
+          <button
+            onClick={autoQualifyTop10R2}
+            className="bg-amber-400 hover:bg-amber-300 text-black font-pixel text-xs px-4 py-2 font-bold shadow-pixel-sm flex items-center gap-1.5"
+          >
+            Advance Top 10 to Round 3
+          </button>
+        </div>
+      )}
+
       <section className="bg-[#18181b] border-2 border-purple-500/80 p-5 shadow-pixel">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-700 pb-3 mb-4">
           <div>
@@ -59,7 +77,7 @@ export const Round3ControlTab: React.FC = () => {
                 <button
                   key={item.id}
                   onClick={() => openRound3Question(questionIndex)}
-                  className={`border px-3 py-2 text-left ${index === questionIndex && question?.id === item.id ? 'bg-purple-900 border-purple-300 text-white' : 'bg-[#111215] border-zinc-700 text-zinc-300 hover:border-purple-400'}`}
+                  className={`border px-3 py-2 text-left ${index === questionIndex && question?.id === item.id ? 'bg-purple-900 border-purple-300 text-white font-bold' : 'bg-[#111215] border-zinc-700 text-zinc-300 hover:border-purple-400'}`}
                 >
                   <span className="font-pixel text-[10px] block">QUESTION {questionIndex + 1} / {questionBanks.round3Finals.length}</span>
                   <span className="font-sans text-xs block mt-1 max-w-52 truncate">{item.category}</span>
@@ -102,12 +120,20 @@ export const Round3ControlTab: React.FC = () => {
               </button>
             </div>
             <div className="p-4 bg-[#111215] border border-zinc-700">
-              <div className="font-pixel text-[10px] text-zinc-400 mb-2">FIRST TEAM TO BUZZ</div>
-              <select value="" onChange={event => selectTeam(event.target.value)} disabled={!round3.isBuzzerOpen} className="w-full bg-black border border-zinc-600 px-2 py-2 text-white text-sm disabled:opacity-50">
-                <option value="">Select finalist...</option>
+              <div className="font-pixel text-[10px] text-zinc-400 mb-2">BUZZED TEAM</div>
+              <select
+                value={round3.buzzerTeamId || ''}
+                onChange={event => selectTeam(event.target.value)}
+                className="w-full bg-black border border-purple-500/80 px-2 py-2 text-white text-sm"
+              >
+                <option value="">{round3.buzzerTeamId ? 'Change team...' : 'Select team that buzzed...'}</option>
                 {eligible.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
               </select>
-              {round3.buzzerTeamId && <div className="mt-2 font-bold text-amber-300">{teams.find(team => team.id === round3.buzzerTeamId)?.name} • {activeQuestion.timerSecondsLeft}s</div>}
+              {round3.buzzerTeamId && (
+                <div className="mt-2 text-xs text-amber-300 font-pixel">
+                  ACTIVE: {teams.find(team => team.id === round3.buzzerTeamId)?.name}
+                </div>
+              )}
             </div>
             <div className="p-4 bg-[#111215] border border-zinc-700">
               <div className="font-pixel text-[10px] text-zinc-400 mb-2 flex items-center gap-2"><Clock className="w-4 h-4" /> ANSWER TIMER</div>
@@ -138,7 +164,18 @@ export const Round3ControlTab: React.FC = () => {
           </div>
         </section>
       ) : (
-        <div className="bg-[#18181b] border border-zinc-700 p-8 text-center text-zinc-400">Select a Round 3 question above to present it.</div>
+        <div className="bg-[#18181b] border-2 border-purple-500/50 p-8 text-center text-zinc-300">
+          <p className="font-pixel text-sm text-purple-300 mb-3">QUESTION READY TO PRESENT</p>
+          <p className="text-xs text-zinc-400 mb-4 max-w-md mx-auto">
+            Click below to load Question 1 on the Projector and enable buzzer controls:
+          </p>
+          <button
+            onClick={() => openRound3Question(0)}
+            className="bg-purple-600 hover:bg-purple-500 text-white font-pixel text-xs px-6 py-3 font-bold shadow-pixel"
+          >
+            PRESENT QUESTION 1 NOW
+          </button>
+        </div>
       )}
 
       <section className="bg-[#18181b] border-2 border-zinc-700 p-5 shadow-pixel overflow-x-auto">

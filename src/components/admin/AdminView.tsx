@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useEvent } from '../../context/EventContext';
 import { Round } from '../../types';
 import { Round2WagerTab } from './tabs/Round2WagerTab';
@@ -7,6 +7,7 @@ import { Round3ControlTab } from './tabs/Round3ControlTab';
 import { QuestionBanksTab } from './tabs/QuestionBanksTab';
 import { SettingsTab } from './tabs/SettingsTab';
 import { ProjectorView } from '../projector/ProjectorView';
+import { checkServerHealth, syncAllQuestions } from '../../services/api';
 import {
   Monitor,
   Trophy,
@@ -24,7 +25,9 @@ import {
   EyeOff,
   Volume2,
   VolumeX,
-  X
+  X,
+  Database,
+  RefreshCw
 } from 'lucide-react';
 
 type AdminTab = 'wager' | 'finals' | 'teams' | 'banks' | 'settings';
@@ -42,6 +45,30 @@ export const AdminView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<AdminTab>('wager');
   const [showLivePreview, setShowLivePreview] = useState(false);
   const [winnerModalOpen, setWinnerModalOpen] = useState(false);
+  const [isServerOnline, setIsServerOnline] = useState<boolean | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    const check = async () => {
+      const ok = await checkServerHealth();
+      if (isMounted) setIsServerOnline(ok);
+    };
+    check();
+    const interval = setInterval(check, 5000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+  const handleManualSync = async () => {
+    setIsSyncing(true);
+    await syncAllQuestions(state.questionBanks);
+    const ok = await checkServerHealth();
+    setIsServerOnline(ok);
+    setIsSyncing(false);
+  };
 
   const { currentRound, activeTieBreaker, teams } = state;
 
@@ -80,6 +107,31 @@ export const AdminView: React.FC = () => {
 
         {/* Action Header Tools */}
         <div className="flex items-center gap-3">
+          {/* Firebase Server Status Badge */}
+          <div
+            className={`font-pixel text-[10px] px-2.5 py-1.5 border flex items-center gap-1.5 shadow-pixel-sm ${
+              isServerOnline === true
+                ? 'bg-emerald-950/80 border-emerald-500 text-emerald-300'
+                : isServerOnline === false
+                ? 'bg-red-950/80 border-red-500 text-red-300'
+                : 'bg-zinc-800 border-zinc-600 text-zinc-400'
+            }`}
+            title={isServerOnline ? 'Firebase server online and saving data' : 'Server offline. Run: npm run dev:all'}
+          >
+            <Database className="w-3.5 h-3.5" />
+            <span>{isServerOnline === true ? 'FIREBASE ONLINE' : isServerOnline === false ? 'SERVER OFFLINE' : 'CHECKING DB...'}</span>
+            {isServerOnline && (
+              <button
+                onClick={handleManualSync}
+                disabled={isSyncing}
+                className="ml-1 text-emerald-400 hover:text-white"
+                title="Force sync questions and connection"
+              >
+                <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
+              </button>
+            )}
+          </div>
+
           {/* Mute toggle */}
           <button
             onClick={toggleMute}
@@ -88,6 +140,29 @@ export const AdminView: React.FC = () => {
           >
             {state.soundMuted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4 text-emerald-400" />}
           </button>
+
+          {/* Quick links to Results Pages */}
+          <a
+            href="#/round1-results"
+            target="_blank"
+            rel="noreferrer"
+            className="px-2.5 py-1.5 bg-[#17251a] hover:bg-[#203324] border border-emerald-600 text-emerald-300 font-pixel text-[10px] flex items-center gap-1 shadow-pixel-sm"
+            title="Open Round 1 Live Results in new tab"
+          >
+            <TreePine className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="hidden lg:inline">R1 Results</span>
+          </a>
+
+          <a
+            href="#/round2-results"
+            target="_blank"
+            rel="noreferrer"
+            className="px-2.5 py-1.5 bg-[#2d0e0e] hover:bg-[#3d1414] border border-red-500 text-red-300 font-pixel text-[10px] flex items-center gap-1 shadow-pixel-sm"
+            title="Open Round 2 Wager Matrix in new tab"
+          >
+            <Flame className="w-3.5 h-3.5 text-red-400" />
+            <span className="hidden lg:inline">R2 Wager Results</span>
+          </a>
 
           {/* Toggle Live Mini-Preview */}
           <button
