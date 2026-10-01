@@ -9,8 +9,11 @@ import {
   Monitor,
   CheckCircle,
   AlertTriangle,
-  Play
+  Play,
+  Database,
+  Trash2
 } from 'lucide-react';
+import { deleteRoundData, resetAllEventData } from '../../../services/api';
 
 export const SettingsTab: React.FC = () => {
   const {
@@ -287,6 +290,98 @@ export const SettingsTab: React.FC = () => {
           >
             <RotateCcw className="w-3.5 h-3.5" />
             RESET TO DEFAULTS
+          </button>
+        </div>
+      </div>
+
+      {/* FIRESTORE CLOUD DATABASE & EXPORTS MANAGEMENT */}
+      <div className="bg-[#18181b] border-2 border-red-600/80 p-6 shadow-pixel">
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#3f3f46] pb-4 mb-4">
+          <div className="flex items-center gap-3">
+            <Database className="w-6 h-6 text-red-400" />
+            <div>
+              <h2 className="font-pixel text-base md:text-lg text-white uppercase">
+                FIRESTORE CLOUD DATABASE & EXPORT CONTROLS
+              </h2>
+              <p className="font-sans text-xs text-zinc-400 mt-0.5">
+                Manage cloud database records and generated round exports.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+          <div className="p-3.5 bg-[#111215] border border-zinc-700 flex flex-col justify-between">
+            <div>
+              <span className="font-pixel text-xs text-emerald-400 block mb-1">ROUND 1 OVERWORLD</span>
+              <p className="text-[11px] text-zinc-400 mb-3">Deletes R1 summary, paper test results, and R1 CSV files from Firestore.</p>
+            </div>
+            <button
+              onClick={async () => {
+                if (confirm('Delete Round 1 data from Firestore and exports?')) {
+                  const ok = await deleteRoundData('ROUND_1');
+                  alert(ok ? 'Round 1 cloud data deleted successfully.' : 'Failed to delete Round 1 data.');
+                }
+              }}
+              className="bg-red-950 hover:bg-red-900 border border-red-700 text-red-300 font-pixel text-[10px] py-2 flex items-center justify-center gap-1.5 transition-all"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-red-400" /> Clear Round 1 Cloud Data
+            </button>
+          </div>
+
+          <div className="p-3.5 bg-[#111215] border border-zinc-700 flex flex-col justify-between">
+            <div>
+              <span className="font-pixel text-xs text-amber-400 block mb-1">ROUND 2 NETHER WAGER</span>
+              <p className="text-[11px] text-zinc-400 mb-3">Deletes R2 summary, wager matrix, and R2 CSV files from Firestore.</p>
+            </div>
+            <button
+              onClick={async () => {
+                if (confirm('Delete Round 2 wager data from Firestore and exports?')) {
+                  const ok = await deleteRoundData('ROUND_2');
+                  alert(ok ? 'Round 2 wager data deleted successfully.' : 'Failed to delete Round 2 data.');
+                }
+              }}
+              className="bg-red-950 hover:bg-red-900 border border-red-700 text-red-300 font-pixel text-[10px] py-2 flex items-center justify-center gap-1.5 transition-all"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-red-400" /> Clear Round 2 Cloud Data
+            </button>
+          </div>
+
+          <div className="p-3.5 bg-[#111215] border border-zinc-700 flex flex-col justify-between">
+            <div>
+              <span className="font-pixel text-xs text-purple-400 block mb-1">ROUND 3 THE END FINALS</span>
+              <p className="text-[11px] text-zinc-400 mb-3">Deletes R3 finals summary, buzzer attempts, and R3 CSV files from Firestore.</p>
+            </div>
+            <button
+              onClick={async () => {
+                if (confirm('Delete Round 3 finals data from Firestore and exports?')) {
+                  const ok = await deleteRoundData('ROUND_3');
+                  alert(ok ? 'Round 3 finals data deleted successfully.' : 'Failed to delete Round 3 data.');
+                }
+              }}
+              className="bg-red-950 hover:bg-red-900 border border-red-700 text-red-300 font-pixel text-[10px] py-2 flex items-center justify-center gap-1.5 transition-all"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-red-400" /> Clear Round 3 Cloud Data
+            </button>
+          </div>
+        </div>
+
+        <div className="pt-4 border-t border-zinc-800 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <span className="font-pixel text-xs text-red-400 block uppercase">Wipe All Cloud Event Records</span>
+            <span className="text-[11px] text-zinc-400">Clears all round summaries, question results, and export files from Firestore for a fresh event start.</span>
+          </div>
+
+          <button
+            onClick={async () => {
+              if (confirm('⚠️ WARNING: Are you sure you want to WIPE ALL Firestore event records and exported CSVs? This cannot be undone.')) {
+                const ok = await resetAllEventData();
+                alert(ok ? 'All Firestore event records and exports were wiped successfully.' : 'Failed to wipe cloud records.');
+              }
+            }}
+            className="bg-red-700 hover:bg-red-600 text-white font-pixel text-xs px-4 py-2.5 border border-red-400 shadow-pixel flex items-center gap-2"
+          >
+            <Trash2 className="w-4 h-4" /> WIPE ALL CLOUD EVENT DATA
           </button>
         </div>
       </div>

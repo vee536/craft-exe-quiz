@@ -12,6 +12,7 @@ import {
 } from '../types';
 import { buildInitialRound3State, getInitialEventState } from '../data/initialDemoData';
 import { soundManager } from '../utils/audio';
+import { syncAllQuestions, syncOneQuestion, deleteQuestionFromDb, saveQuestionResult, saveRoundComplete, buildScoreSnapshot } from '../services/api';
 
 const STORAGE_KEY = 'craft_exe_state_v2';
 const CHANNEL_NAME = 'craft_exe_sync_channel';
@@ -241,6 +242,13 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     soundManager.setVolume(state.soundVolume);
   }, [state.soundMuted, state.soundVolume]);
 
+  // Sync all questions to Firestore on initial load (fire-and-forget)
+  useEffect(() => {
+    syncAllQuestions(state.questionBanks);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // only on mount
+
+
   // --- ROUND 1 OVERWORLD COUNTDOWN TIMER TICK ENGINE ---
   useEffect(() => {
     if (state.round1Timer.isRunning) {
@@ -453,6 +461,28 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Navigation handlers
   const setCurrentRound = useCallback((round: Round) => {
+    // Fire round-complete save when admin navigates to a results/scoreboard/winner screen
+    if (round === 'ROUND_1_RESULTS') {
+      saveRoundComplete({
+        round: 'ROUND_1',
+        teams: state.teams,
+      });
+    } else if (round === 'ROUND_2_SCOREBOARD') {
+      saveRoundComplete({
+        round: 'ROUND_2',
+        teams: state.teams,
+        round2Wager: state.round2Wager,
+        round2Questions: state.questionBanks.round2Main,
+      });
+    } else if (round === 'ROUND_3_SCOREBOARD' || round === 'WINNER') {
+      saveRoundComplete({
+        round: 'ROUND_3',
+        teams: state.teams,
+        round3State: state.round3,
+        round3Questions: state.questionBanks.round3Finals,
+      });
+    }
+
     updateState(prev => ({
       ...prev,
       currentRound: round,
@@ -463,7 +493,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         isTimerRunning: false,
       }
     }));
-  }, [updateState]);
+  }, [updateState, state.teams]);
 
   const activateTieBreaker = useCallback((type: TieBreakerType) => {
     updateState(prev => ({
@@ -584,21 +614,45 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const autoQualifyTop20R1 = useCallback(() => {
     updateState(prev => {
       const sorted = [...prev.teams].sort((a, b) => b.round1Score - a.round1Score);
-      const cutoffScore = sorted[19]?.round1Score;
-      const tiedAtCutoff = cutoffScore !== undefined && sorted[20]?.round1Score === cutoffScore;
-      const top20Ids = new Set((tiedAtCutoff
-        ? sorted.filter(team => team.round1Score > cutoffScore)
-        : sorted.slice(0, 20)
-      ).map(t => t.id));
+      // Cleanly pick top 20 teams
+      const top20 = sorted.slice(0, 20);
+      const top20Ids = new Set(top20.map(t => t.id));
 
       const updatedTeams = prev.teams.map(t => ({
         ...t,
         isQualifiedR2: top20Ids.has(t.id),
+        round2Score: 0,
+        score: top20Ids.has(t.id) ? 0 : t.score,
       }));
+
+      // Ensure every question in Round 2 has wager entries for all qualified teams
+      const qualified = updatedTeams.filter(t => t.isQualifiedR2);
+      const updatedQuestions = prev.round2Wager.questions.map(q => {
+        const wagers = { ...q.wagers };
+        qualified.forEach(t => {
+          if (!wagers[t.id]) {
+            wagers[t.id] = {
+              teamId: t.id,
+              wager: 100,
+              isWagerSet: true,
+              isDouble: false,
+              isCorrect: null,
+            };
+          }
+        });
+        return { ...q, wagers };
+      });
+
+      // Save Round 1 completion to Firebase
+      saveRoundComplete('ROUND_1', updatedTeams);
 
       return {
         ...prev,
         teams: updatedTeams,
+        round2Wager: {
+          ...prev.round2Wager,
+          questions: updatedQuestions,
+        },
       };
     });
   }, [updateState]);
@@ -608,17 +662,33 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     updateState(prev => {
       const r2Teams = prev.teams.filter(t => t.isQualifiedR2);
       const sorted = [...r2Teams].sort((a, b) => b.round2Score - a.round2Score);
-      const cutoffScore = sorted[9]?.round2Score;
-      const tiedAtCutoff = cutoffScore !== undefined && sorted[10]?.round2Score === cutoffScore;
-      const top10Ids = new Set((tiedAtCutoff
-        ? sorted.filter(team => team.round2Score > cutoffScore)
-        : sorted.slice(0, 10)
-      ).map(t => t.id));
+      const top10 = sorted.slice(0, 10);
+      const top10Ids = new Set(top10.map(t => t.id));
 
-      const updatedTeams = prev.teams.map(t => ({
-        ...t,
-        isFinalistR3: top10Ids.has(t.id),
-      }));
+      // Also normalize scores automatically for Round 3 finalists
+      const maxR2 = top10.length > 0 ? Math.max(...top10.map(t => t.round2Score)) : 0;
+
+      const updatedTeams = prev.teams.map(t => {
+        const isFinalist = top10Ids.has(t.id);
+        if (!isFinalist) {
+          return { ...t, isFinalistR3: false };
+        }
+        const starting = maxR2 > 0 ? Number(((t.round2Score / maxR2) * 100).toFixed(2)) : 0;
+        return {
+          ...t,
+          isFinalistR3: true,
+          round3StartingScore: starting,
+          score: starting,
+        };
+      });
+
+      // Save Round 2 completion to Firebase
+      saveRoundComplete({
+        round: 'ROUND_2',
+        teams: updatedTeams,
+        round2Wager: prev.round2Wager,
+        round2Questions: prev.questionBanks.round2Main,
+      });
 
       return {
         ...prev,
@@ -782,14 +852,31 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const currentQRecord = prev.round2Wager.questions[qIdx];
       if (!currentQRecord || currentQRecord.isRevealed || currentQRecord.isScored) return prev;
       const qualifiedTeams = prev.teams.filter(team => team.isQualifiedR2);
-      if (!qualifiedTeams.every(team => currentQRecord.wagers[team.id]?.isWagerSet)) return prev;
+      
+      const ensuredWagers = { ...currentQRecord.wagers };
+      qualifiedTeams.forEach(team => {
+        if (!ensuredWagers[team.id]) {
+          ensuredWagers[team.id] = {
+            teamId: team.id,
+            wager: 100,
+            isWagerSet: true,
+            isDouble: false,
+            isCorrect: null,
+          };
+        } else {
+          ensuredWagers[team.id] = {
+            ...ensuredWagers[team.id],
+            isWagerSet: true,
+          };
+        }
+      });
 
       return {
         ...prev,
         round2Wager: {
           ...prev.round2Wager,
           questions: prev.round2Wager.questions.map((question, index) =>
-            index === qIdx ? { ...question, areWagersLocked: true } : question
+            index === qIdx ? { ...question, areWagersLocked: true, wagers: ensuredWagers } : question
           ),
         },
       };
@@ -955,23 +1042,39 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     updateState(prev => {
       const qIdx = prev.round2Wager.currentQuestionIndex;
       const currentQRecord = prev.round2Wager.questions[qIdx];
-      const r2Teams = prev.teams.filter(team => team.isQualifiedR2);
-      if (!currentQRecord || currentQRecord.isScored || !currentQRecord.isRevealed ||
-        !r2Teams.every(team => currentQRecord.wagers[team.id]?.isCorrect !== null && currentQRecord.wagers[team.id]?.isCorrect !== undefined)) return prev;
+      if (!currentQRecord || currentQRecord.isScored) return prev;
+
+      // Ensure Top 20 teams are selected
+      let r2Teams = prev.teams.filter(team => team.isQualifiedR2);
+      let baseTeams = prev.teams;
+      if (r2Teams.length === 0) {
+        const sorted = [...prev.teams].sort((a, b) => (b.round1Score ?? 0) - (a.round1Score ?? 0)).slice(0, 20);
+        const top20Ids = new Set(sorted.map(t => t.id));
+        baseTeams = prev.teams.map(t => ({
+          ...t,
+          isQualifiedR2: top20Ids.has(t.id),
+        }));
+        r2Teams = baseTeams.filter(t => t.isQualifiedR2);
+      }
 
       // Update team scores
       const updatedWagers = { ...currentQRecord.wagers };
-      const updatedTeams = prev.teams.map(t => {
+      const updatedTeams = baseTeams.map(t => {
         if (!t.isQualifiedR2) return t;
 
-        const sub = currentQRecord.wagers[t.id];
-        if (!sub || sub.isCorrect === null) return t; // No submission or pending
+        let sub = updatedWagers[t.id];
+        if (!sub) {
+          sub = { teamId: t.id, wager: 100, isWagerSet: true, isDouble: false, isCorrect: false };
+        }
+        // Default unmarked to false (Wrong) so calculation is never blocked
+        const isCorr = sub.isCorrect === true;
+        sub = { ...sub, isCorrect: isCorr, isWagerSet: true };
 
         let delta = 0;
         if (sub.isDouble) {
-          delta = sub.isCorrect ? 2 * sub.wager : -100;
+          delta = isCorr ? 2 * sub.wager : -100;
         } else {
-          delta = sub.isCorrect ? sub.wager : -50;
+          delta = isCorr ? sub.wager : -50;
         }
 
         const newScore = Math.max(0, t.round2Score + delta);
@@ -989,10 +1092,57 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       });
 
       const updatedQuestions = prev.round2Wager.questions.map((q, idx) =>
-        idx === qIdx ? { ...q, isScored: true, wagers: updatedWagers } : q
+        idx === qIdx ? { ...q, isRevealed: true, areWagersLocked: true, isScored: true, wagers: updatedWagers } : q
       );
 
       const allScored = updatedQuestions.every(q => q.isScored);
+
+      // Save a question result record per team to Firestore (fire-and-forget)
+      const q2 = prev.questionBanks.round2Main[qIdx];
+      if (q2) {
+        const scoreSnapshot = buildScoreSnapshot(updatedTeams);
+        r2Teams.forEach(t => {
+          const sub = updatedWagers[t.id];
+          if (!sub || sub.isCorrect === null) return;
+          const originalTeam = prev.teams.find(x => x.id === t.id);
+          const before = originalTeam?.round2Score ?? 0;
+          const after = Math.max(0, before + (sub.appliedDelta ?? 0));
+          saveQuestionResult({
+            questionId: q2.id,
+            questionNumber: qIdx + 1,
+            questionIndex: qIdx,
+            category: q2.category,
+            questionText: q2.questionText,
+            correctAnswer: q2.correctAnswer,
+            round: 'ROUND_2_WAGER',
+            roundType: 'WAGER_ROUND',
+            bankKey: 'round2Main',
+            teamId: t.id,
+            teamName: t.name,
+            wager: sub.wager,
+            isDouble: Boolean(sub.isDouble),
+            isCorrect: Boolean(sub.isCorrect),
+            isSteal: false,
+            isBlazeWager: Boolean(sub.isDouble),
+            teamScoreBefore: before,
+            scoreDelta: after - before,
+            teamScoreAfter: after,
+            allTeamScores: scoreSnapshot,
+          });
+        });
+      }
+
+      // Update Round 2 Wager document and CSV in Firebase
+      saveRoundComplete({
+        round: 'ROUND_2',
+        teams: updatedTeams,
+        round2Wager: {
+          ...prev.round2Wager,
+          questions: updatedQuestions,
+          isCompleted: allScored,
+        },
+        round2Questions: prev.questionBanks.round2Main,
+      });
 
       return {
         ...prev,
@@ -1120,7 +1270,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     updateState(prev => {
       const record = prev.round3.questions[prev.round3.currentQuestionIndex];
       const team = prev.teams.find(candidate => candidate.id === teamId && candidate.isFinalistR3);
-      if (!prev.round3.isBuzzerOpen || !team || !record || record.attempts[teamId]) return prev;
+      if (!team || !record || record.attempts[teamId]) return prev;
       return {
         ...prev,
         round3: {
@@ -1146,8 +1296,38 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const teamId = state.round3.buzzerTeamId;
     if (!teamId) return;
     playSound(result === 'CORRECT' ? 'correct' : 'incorrect');
+
+    // Capture context before state update for Firestore save
+    const team = state.teams.find(t => t.id === teamId);
+    const scoreBefore = team?.score ?? 0;
+    const penaltyOrAward = result === 'CORRECT' ? 100 : result === 'WRONG' ? -50 : 0;
+    const scoreAfter = Math.max(0, scoreBefore + penaltyOrAward);
+    const activeQ = state.activeQuestion.question;
+
     updateState(prev => applyRound3Result(prev, teamId, result));
-  }, [state.round3.buzzerTeamId, playSound, updateState]);
+
+    // Save to Firestore (fire-and-forget)
+    if (activeQ) {
+      saveQuestionResult({
+        questionId: activeQ.id,
+        questionText: activeQ.questionText,
+        correctAnswer: activeQ.correctAnswer,
+        round: 'ROUND_3_QUESTION',
+        bankKey: 'round3Finals',
+        teamId,
+        teamName: team?.name || teamId,
+        isCorrect: result === 'CORRECT',
+        isSteal: false,
+        isBlazeWager: false,
+        teamScoreBefore: scoreBefore,
+        scoreDelta: scoreAfter - scoreBefore,
+        teamScoreAfter: scoreAfter,
+        allTeamScores: buildScoreSnapshot(
+          state.teams.map(t => t.id === teamId ? { ...t, score: scoreAfter } : t)
+        ),
+      });
+    }
+  }, [state.round3.buzzerTeamId, state.teams, state.activeQuestion.question, playSound, updateState]);
 
   const closeRound3Question = useCallback(() => {
     updateState(prev => ({
@@ -1289,6 +1469,8 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         [bankKey]: [...prev.questionBanks[bankKey], newQuestion]
       }
     }));
+    // Sync new question to Firestore (fire-and-forget)
+    syncOneQuestion(String(bankKey), newQuestion);
     return id;
   }, [updateState]);
 
@@ -1300,6 +1482,8 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         [bankKey]: prev.questionBanks[bankKey].map(item => item.id === q.id ? q : item)
       }
     }));
+    // Sync updated question to Firestore (fire-and-forget)
+    syncOneQuestion(String(bankKey), q);
   }, [updateState]);
 
   const deleteQuestion = useCallback((bankKey: keyof EventState['questionBanks'], qId: string) => {
@@ -1310,6 +1494,8 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         [bankKey]: prev.questionBanks[bankKey].filter(item => item.id !== qId)
       }
     }));
+    // Remove question from Firestore (fire-and-forget)
+    deleteQuestionFromDb(qId);
   }, [updateState]);
 
   // Active Question Controller
@@ -1449,6 +1635,12 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       playSound('incorrect');
     }
 
+    // Capture score-before for the answering team (fire-and-forget after state update)
+    const teamBefore = state.teams.find(t => t.id === teamId);
+    const scoreBefore = teamBefore?.score ?? 0;
+    const scoreAfter = Math.max(0, scoreBefore + delta);
+    const scoreDelta = scoreAfter - scoreBefore;
+
     updateState(prev => {
       const selectingId = prev.activeQuestion.selectingTeamId;
 
@@ -1493,6 +1685,25 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         };
       }
 
+      // Save question result to Firestore (fire-and-forget)
+      const answeringTeam = prev.teams.find(t => t.id === teamId);
+      saveQuestionResult({
+        questionId: active.question!.id,
+        questionText: active.question!.questionText,
+        correctAnswer: active.question!.correctAnswer,
+        round: prev.currentRound,
+        bankKey: active.bankSource,
+        teamId,
+        teamName: answeringTeam?.name || teamId,
+        isCorrect,
+        isSteal,
+        isBlazeWager: active.isBlazeWagerActive,
+        teamScoreBefore: scoreBefore,
+        scoreDelta,
+        teamScoreAfter: scoreAfter,
+        allTeamScores: buildScoreSnapshot(updatedTeams),
+      });
+
       return {
         ...prev,
         teams: updatedTeams,
@@ -1505,7 +1716,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
       };
     });
-  }, [state.activeQuestion, playSound, updateState]);
+  }, [state.activeQuestion, state.teams, playSound, updateState]);
 
   // Timer controls (Generic / Active Question)
   const toggleTimerEnabled = useCallback((enabled: boolean) => {
